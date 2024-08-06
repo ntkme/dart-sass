@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:cli_pkg/js.dart';
 import 'package:js/js.dart';
 import 'package:node_interop/fs.dart';
+import 'package:node_interop/os.dart';
 import 'package:node_interop/node_interop.dart' hide process;
 import 'package:node_interop/util.dart';
 import 'package:path/path.dart' as p;
@@ -15,7 +16,7 @@ import 'package:source_span/source_span.dart';
 import 'package:watcher/watcher.dart';
 
 import '../exception.dart';
-import '../js/chokidar.dart';
+import '../js/parcel_watcher.dart';
 
 @JS('process')
 external final Process? _nodeJsProcess; // process is null in the browser
@@ -248,40 +249,72 @@ int get exitCode => _process?.exitCode ?? 0;
 
 set exitCode(int code) => _process?.exitCode = code;
 
-Future<Stream<WatchEvent>> watchDir(String path, {bool poll = false}) {
+Future<Stream<WatchEvent>> watchDir(String path, {bool poll = false}) async {
   if (!isNodeJs) {
     throw UnsupportedError("watchDir() is only supported on Node.js");
   }
-  var watcher = chokidar.watch(
-      path, ChokidarOptions(disableGlobbing: true, usePolling: poll));
 
-  // Don't assign the controller until after the ready event fires. Otherwise,
-  // Chokidar will give us a bunch of add events for files that already exist.
   StreamController<WatchEvent>? controller;
-  watcher
-    ..on(
-        'add',
-        allowInterop((String path, [void _]) =>
-            controller?.add(WatchEvent(ChangeType.ADD, path))))
-    ..on(
-        'change',
-        allowInterop((String path, [void _]) =>
-            controller?.add(WatchEvent(ChangeType.MODIFY, path))))
-    ..on(
-        'unlink',
-        allowInterop((String path) =>
-            controller?.add(WatchEvent(ChangeType.REMOVE, path))))
-    ..on('error', allowInterop((Object error) => controller?.addError(error)));
+  if (poll) {
+    var tmpdir = _systemErrorToFileSystemException(
+        () => fs.mkdtempSync(p.join(os.tmpdir(), 'dart-sass-')));
+    var currentSnapshot = p.join(tmpdir, '0');
+    var previousSnapshot = p.join(tmpdir, '1');
+    var processing = false;
+    await ParcelWatcher.writeSnapshotFuture(path, currentSnapshot);
+    var timer = Timer.periodic(Duration(seconds: 1), (Timer t) async {
+      if (processing ||
+          _systemErrorToFileSystemException(
+              () => !fs.existsSync(currentSnapshot))) return;
+      processing = true;
 
-  var completer = Completer<Stream<WatchEvent>>();
-  watcher.on('ready', allowInterop(() {
-    // dart-lang/sdk#45348
-    var stream = (controller = StreamController<WatchEvent>(onCancel: () {
-      watcher.close();
+      _systemErrorToFileSystemException(
+          () => fs.renameSync(currentSnapshot, previousSnapshot));
+      await ParcelWatcher.writeSnapshotFuture(path, currentSnapshot);
+      var events =
+          await ParcelWatcher.getEventsSinceFuture(path, previousSnapshot);
+      _systemErrorToFileSystemException(() => fs.unlinkSync(previousSnapshot));
+      for (var event in events) {
+        switch (event.type) {
+          case 'create':
+            controller?.add(WatchEvent(ChangeType.ADD, event.path));
+          case 'update':
+            controller?.add(WatchEvent(ChangeType.MODIFY, event.path));
+          case 'delete':
+            controller?.add(WatchEvent(ChangeType.REMOVE, event.path));
+        }
+      }
+
+      processing = false;
+    });
+    return (controller = StreamController<WatchEvent>(onCancel: () {
+      timer.cancel();
+      _systemErrorToFileSystemException(() => fs.unlinkSync(currentSnapshot));
+      _systemErrorToFileSystemException(() => fs.rmdirSync(tmpdir));
     }))
         .stream;
-    completer.complete(stream);
-  }));
+  } else {
+    var subscription = await ParcelWatcher.subscribeFuture(path,
+        (Object? error, List<ParcelWatcherEvent> events) {
+      if (error != null) {
+        controller?.addError(error);
+      } else {
+        for (var event in events) {
+          switch (event.type) {
+            case 'create':
+              controller?.add(WatchEvent(ChangeType.ADD, event.path));
+            case 'update':
+              controller?.add(WatchEvent(ChangeType.MODIFY, event.path));
+            case 'delete':
+              controller?.add(WatchEvent(ChangeType.REMOVE, event.path));
+          }
+        }
+      }
+    });
 
-  return completer.future;
+    return (controller = StreamController<WatchEvent>(onCancel: () {
+      subscription.unsubscribe();
+    }))
+        .stream;
+  }
 }

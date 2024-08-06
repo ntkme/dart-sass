@@ -35,7 +35,7 @@ void main(List<String> args) {
   pkg.homebrewEditFormula.value = _updateHomebrewLanguageRevision;
   pkg.jsRequires.value = [
     pkg.JSRequire("immutable", target: pkg.JSRequireTarget.all),
-    pkg.JSRequire("chokidar", target: pkg.JSRequireTarget.cli),
+    pkg.JSRequire("@parcel/watcher", target: pkg.JSRequireTarget.cli),
     pkg.JSRequire("readline", target: pkg.JSRequireTarget.cli),
     pkg.JSRequire("fs", target: pkg.JSRequireTarget.node),
     pkg.JSRequire("module",
