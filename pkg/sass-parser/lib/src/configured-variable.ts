@@ -27,7 +27,7 @@ export interface ConfiguredVariableRaws {
    * The variable's name, not including the `$`.
    *
    * This may be different than {@link ConfiguredVariable.name} if the name
-   * contains escape codes.
+   * contains escape codes or underscores.
    */
   name?: RawWithValue<string>;
 
@@ -94,7 +94,12 @@ export class ConfiguredVariable extends Node {
   declare raws: ConfiguredVariableRaws;
   declare parent: Configuration | undefined;
 
-  /** The variable name, not including `$`. */
+  /**
+   * The variable name, not including `$`.
+   *
+   * This is the parsed and normalized value, with underscores converted to
+   * hyphens and escapes resolved to the characters they represent.
+   */
   name!: string;
 
   /** The expresison whose value is iterated over. */
