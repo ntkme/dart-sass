@@ -1,3 +1,12 @@
+## 1.100.1-dev
+
+* Sass stack trace entries are now always either absolute URLs, absolute paths,
+  or paths relative to the current working directory. Previously, if a
+  stylesheet was loaded using a relative URL (as from a load path), that
+  relative URL was listed even if it couldn't be resolved relative to the
+  current working directory. However, this created potential ambiguities, so
+  this behavior has been removed.
+
 ## 1.100.0
 
 * Writing two compound selectors adjacent to one another without any whitespace
